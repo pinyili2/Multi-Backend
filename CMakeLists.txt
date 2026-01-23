@@ -249,48 +249,88 @@ Ensure CMAKE_CXX_COMPILER is set to your AdaptiveCpp executable path (e.g., /opt
 
     if(USE_SYCL_ICPX)
         message(STATUS "Configuring for SYCL with Intel DPC++ (icpx).")
-        add_definitions(-DPROJECT_USES_SYCL_ICPX) # Specific definition for icpx
+        add_definitions(-DPROJECT_USES_SYCL_ICPX)
 
-        # CMAKE_CXX_COMPILER_ID for icpx is typically "IntelLLVM".
         if(CMAKE_CXX_COMPILER_ID MATCHES "IntelLLVM" OR CMAKE_CXX_COMPILER MATCHES "icpx")
             message(STATUS "Verified Intel DPC++ (icpx) compiler: ${CMAKE_CXX_COMPILER}")
             set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-c99-designator")
-            message(STATUS "Suppressed -Wc99-designator warning for Intel DPC++")
 
-            # Configure SYCL targets based on available hardware
             if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-                # On Linux, check for CUDA and configure accordingly
+                # ----------------------------------------------------------------
+                # 1. Attempt to detect AMD GPUs (Frontier/Delta)
+                # ----------------------------------------------------------------
+                find_program(ROCM_SMI rocm-smi)
                 find_program(NVIDIA_SMI nvidia-smi)
-                if(NVIDIA_SMI)
+
+                if(ROCM_SMI)
+                    message(STATUS "Found rocm-smi: Configuring SYCL for AMD backend")
+
+                    # Target AMD GCN architecture
+                    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsycl -fsycl-targets=amdgcn-amd-amdhsa -O3")
+
+                    # CRITICAL: Set Sub-Group Size to 64 for AMD
+                    add_compile_definitions(SG_SIZE=64)
+
+                    # Attempt to detect architecture (gfx90a = Frontier, gfx908 = Delta)
+                    # You can override this by passing -DAMD_ARCH=gfx90a to cmake
+                    if(NOT DEFINED AMD_ARCH)
+                        execute_process(COMMAND ${ROCM_SMI} --showproductname --json
+                                      OUTPUT_VARIABLE AMD_GPU_INFO
+                                      ERROR_QUIET)
+                        if(AMD_GPU_INFO MATCHES "MI200" OR AMD_GPU_INFO MATCHES "MI250")
+                            set(AMD_ARCH "gfx90a") # Frontier
+                        elseif(AMD_GPU_INFO MATCHES "MI100")
+                            set(AMD_ARCH "gfx908") # Delta
+                        else()
+                            set(AMD_ARCH "gfx90a") # Default to newer (Frontier) if unknown
+                            message(WARNING "Could not auto-detect AMD Arch. Defaulting to ${AMD_ARCH}. Use -DAMD_ARCH=gfx... to override.")
+                        endif()
+                    endif()
+
+                    message(STATUS "Targeting AMD Architecture: ${AMD_ARCH}")
+                    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Xsycl-target-backend --offload-arch=${AMD_ARCH}")
+
+                # ----------------------------------------------------------------
+                # 2. Attempt to detect NVIDIA GPUs
+                # ----------------------------------------------------------------
+                elseif(NVIDIA_SMI)
                     execute_process(COMMAND ${NVIDIA_SMI} --query-gpu=count --format=csv,noheader,nounits
                                   OUTPUT_VARIABLE GPU_COUNT
                                   OUTPUT_STRIP_TRAILING_WHITESPACE
                                   ERROR_QUIET)
+
                     if(GPU_COUNT AND GPU_COUNT GREATER 0)
                         message(STATUS "Found ${GPU_COUNT} NVIDIA GPU(s), configuring SYCL for CUDA backend")
+
                         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsycl -fsycl-targets=nvptx64-nvidia-cuda -O3")
-                        # Additional CUDA-specific optimizations for SYCL
                         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Xsycl-target-backend=nvptx64-nvidia-cuda --cuda-gpu-arch=sm_80")
+
+                        # CRITICAL: Set Sub-Group Size to 32 for NVIDIA
+                        add_compile_definitions(SG_SIZE=32)
                     else()
-                        message(STATUS "No NVIDIA GPUs found, using default SYCL targets")
+                        # Fallback for empty NVIDIA node
                         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsycl -O3")
+                        add_compile_definitions(SG_SIZE=32)
                     endif()
+
+                # ----------------------------------------------------------------
+                # 3. Fallback (CPU / Intel GPU)
+                # ----------------------------------------------------------------
                 else()
-                    message(STATUS "nvidia-smi not found, using default SYCL targets")
+                    message(STATUS "No dedicated GPU tools (nvidia-smi/rocm-smi) found. Using default SYCL targets.")
                     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsycl -O3")
+                    # Default to 32 (Safe for Intel GPUs/CPU)
+                    add_compile_definitions(SG_SIZE=32)
                 endif()
             else()
-                # For non-Linux systems, use default targets
+                # Non-Linux
                 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsycl -O3")
+                add_compile_definitions(SG_SIZE=32)
             endif()
 
             set(SYCL_COMPILER_CONFIGURED_CORRECTLY TRUE)
-            if(CMAKE_SYSTEM_NAME STREQUAL "Darwin") # macOS
-                message(WARNING "Intel DPC++ (icpx) is not officially supported on macOS. Compilation might fail or be unstable.")
-            endif()
         else()
-            message(WARNING "USE_SYCL_ICPX is ON, but CMAKE_CXX_COMPILER (${CMAKE_CXX_COMPILER}, ID: ${CMAKE_CXX_COMPILER_ID})
-does not appear to be Intel DPC++ (icpx). Ensure CMAKE_CXX_COMPILER is set to 'icpx'.")
+            message(WARNING "USE_SYCL_ICPX is ON, but compiler is not icpx.")
         endif()
     endif()
 

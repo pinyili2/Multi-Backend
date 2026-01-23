@@ -456,7 +456,8 @@ float device_radix_sort_pairs_usm(const Resource &device, uint32_t *keys,
     LOGDEBUG("Pass {} downsweep completed", pass);
   }
   auto end_event = q.submit([&](sycl::handler &h) {
-    h.single_task([]() {}); // Empty marker kernel
+    h.depends_on(E_last);
+    h.single_task([]() {});
   });
   end_event.wait();
 
