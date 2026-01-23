@@ -1,5 +1,5 @@
-#include <cuda_runtime.h>
 #include <cstdint>
+#include <cuda_runtime.h>
 
 #ifdef Debug
 #undef Debug
@@ -14,19 +14,15 @@
 namespace ARBD {
 
 // CUB-based radix sort implementation
-void device_radix_sort_pairs_cub(int device_id,
-                                 uint32_t *d_keys,
-                                 uint32_t *d_payloads, uint32_t *d_alt_keys,
-                                 uint32_t *d_alt_payloads, uint32_t size) {
+float device_radix_sort_pairs_cub(int device_id, uint32_t *d_keys,
+                                  uint32_t *d_payloads, uint32_t *d_alt_keys,
+                                  uint32_t *d_alt_payloads, uint32_t size) {
   // Set the CUDA device
-  int current_device;
-  cudaGetDevice(&current_device);
 
-  if (current_device != device_id) {
-    printf("Switching CUDA device from %d to %d for CUB sort\n", current_device, device_id);
-    cudaSetDevice(device_id);
-  }
-
+  cudaSetDevice(device_id);
+  cudaEvent_t start, stop;
+  cudaEventCreate(&start);
+  cudaEventCreate(&stop);
   // Use default CUDA stream (nullptr)
   // Caller should synchronize if needed
   cudaStream_t stream = nullptr;
@@ -39,30 +35,40 @@ void device_radix_sort_pairs_cub(int device_id,
   void *d_temp_storage = nullptr;
   size_t temp_storage_bytes = 0;
 
-  cudaError_t err = cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, d_keys_db,
-                                  d_values_db, size, 0, sizeof(uint32_t) * 8,
-                                  stream);
+  cudaError_t err = cub::DeviceRadixSort::SortPairs(
+      d_temp_storage, temp_storage_bytes, d_keys_db, d_values_db, size, 0,
+      sizeof(uint32_t) * 8, stream);
   if (err != cudaSuccess) {
     printf("CUB size query error: %s\n", cudaGetErrorString(err));
-    return;
+    return 0;
   }
-  printf("CUB requires %zu bytes of temp storage for %u elements\n", temp_storage_bytes, size);
+  printf("CUB requires %zu bytes of temp storage for %u elements\n",
+         temp_storage_bytes, size);
 
   // 3. Allocate temporary storage
   // In production, you might want to use a caching allocator here
   err = cudaMalloc(&d_temp_storage, temp_storage_bytes);
   if (err != cudaSuccess) {
     printf("cudaMalloc error: %s\n", cudaGetErrorString(err));
-    return;
+    return 0;
   }
 
+  cudaEventRecord(start, stream);
   // 4. Run sorting operation
-  err = cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, d_keys_db,
-                                  d_values_db, size, 0, sizeof(uint32_t) * 8,
-                                  stream);
+  err = cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes,
+                                        d_keys_db, d_values_db, size, 0,
+                                        sizeof(uint32_t) * 8, stream);
   if (err != cudaSuccess) {
     printf("CUB sort error: %s\n", cudaGetErrorString(err));
   }
+  cudaEventRecord(stop, stream);
+  cudaEventSynchronize(stop);
+  float milliseconds = 0;
+  cudaEventElapsedTime(&milliseconds, start, stop);
+  // ============ END TIMER ============
+
+  cudaEventDestroy(start);
+  cudaEventDestroy(stop);
 
   // 5. Cleanup Temp Storage
   cudaFree(d_temp_storage);
@@ -72,12 +78,15 @@ void device_radix_sort_pairs_cub(int device_id,
   // count. If so, copy it back to the primary buffer to match your interface
   // expectation.
   if (d_keys_db.Current() != d_keys) {
-    cudaError_t err1 = cudaMemcpy(d_keys, d_keys_db.Current(), size * sizeof(uint32_t),
-                                   cudaMemcpyDeviceToDevice);
-    cudaError_t err2 = cudaMemcpy(d_payloads, d_values_db.Current(), size * sizeof(uint32_t),
-                                   cudaMemcpyDeviceToDevice);
+    cudaError_t err1 =
+        cudaMemcpy(d_keys, d_keys_db.Current(), size * sizeof(uint32_t),
+                   cudaMemcpyDeviceToDevice);
+    cudaError_t err2 =
+        cudaMemcpy(d_payloads, d_values_db.Current(), size * sizeof(uint32_t),
+                   cudaMemcpyDeviceToDevice);
     if (err1 != cudaSuccess || err2 != cudaSuccess) {
-      printf("CUDA memcpy error: %s %s\n", cudaGetErrorString(err1), cudaGetErrorString(err2));
+      printf("CUDA memcpy error: %s %s\n", cudaGetErrorString(err1),
+             cudaGetErrorString(err2));
     }
   }
 
@@ -91,5 +100,6 @@ void device_radix_sort_pairs_cub(int device_id,
   // 8. Clear any pending CUDA errors before returning to SYCL
   // This prevents SYCL from seeing stale CUDA error states
   cudaGetLastError();
+  return milliseconds;
 }
 } // namespace ARBD
