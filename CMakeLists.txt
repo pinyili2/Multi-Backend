@@ -304,6 +304,8 @@ Ensure CMAKE_CXX_COMPILER is set to your AdaptiveCpp executable path (e.g., /opt
 
                         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsycl -fsycl-targets=nvptx64-nvidia-cuda -O3")
                         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Xsycl-target-backend=nvptx64-nvidia-cuda --cuda-gpu-arch=sm_80")
+                        set(CMAKE_CUDA_ARCHITECTURES "80")
+
 
                         # CRITICAL: Set Sub-Group Size to 32 for NVIDIA
                         add_compile_definitions(SG_SIZE=32)

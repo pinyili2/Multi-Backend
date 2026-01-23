@@ -35,14 +35,14 @@
         {
             "name": "delta-icpx-release",
             "displayName": "Delta SYCL (Release)",
-            "description": "Targets Delta with icpx SYCL for GPU development (Release build).",
+            "description": "Targets Delta with icpx SYCL using GCC 11 toolchain.",
             "binaryDir": "${sourceDir}/build/delta-icpx-release",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_CXX_COMPILER": "/sw/spack/deltas11-2023-03/apps/linux-rhel8-zen/gcc-8.5.0/intel-oneapi-compilers-2024.0.0-r5a4jwi/compiler/2024.0/bin/icpx",
                 "USE_SYCL_ICPX": "ON",
                 "CMAKE_CXX_EXTENSIONS": "OFF",
-                "CMAKE_CXX_FLAGS": "-I/opt/rh/gcc-toolset-12/root/usr/include/c++/12"
+                "CMAKE_CXX_FLAGS": "--gcc-toolchain=/sw/spack/deltas11-2023-03/apps/linux-rhel8-zen/gcc-11.4.0"
             }
         },
         {
